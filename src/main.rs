@@ -1,16 +1,9 @@
 use fancy_regex::Regex;
-use std::cmp::max;
-// for regex
 use std::fs;
 use std::collections::{HashMap, BTreeSet};
 use std::hash::Hash;
 use std::vec;
 
-//  Pretoken contains count and a vector list 
-//  okay BTree for the alphabet pairs, keys are tuple of (count, a1, a2), values are vector of pretokens
-
-// struct for pretokens
-// lifetime specifiers are a little weird, the 'a things
 struct Pretoken {
     count:usize,
     alphabet_list:Vec<Vec<u8>>,
@@ -60,36 +53,6 @@ let x:Vec<u8> = vec![1,12,13];
     assert!(comp24);
     assert!(comp34);
 
-}
-
-fn get_pair_indices(pretoken:&Pretoken, pair:&AlphabetPair) -> Vec<usize> {
-    let mut inds:Vec<usize> = Vec::new();
-    let pair_tuple = &pair.pair;
-    for i in 1..pretoken.alphabet_list.len() {
-        let first_same = &pair_tuple.0 == &pretoken.alphabet_list[i-1];
-        let second_same = &pair_tuple.1 == &pretoken.alphabet_list[i];
-        if first_same && second_same {
-            inds.push(i-1)
-        }
-    }
-    return inds;
-}
-
-fn get_old_pairs(pretoken:&Pretoken, inds:&Vec<usize>) -> Vec<AlphabetPair> {
-    // returns list of pairs that are being impacted by this merge
-    let mut old_pairs:Vec<AlphabetPair> = Vec::new();
-    for ind in inds {
-        let ind = *ind;
-        if ind > 0 {
-            let old_low = AlphabetPair{pair:(pretoken.alphabet_list[ind-1].clone(), pretoken.alphabet_list[ind].clone())};
-            old_pairs.push(old_low);
-        }
-        else if (ind+1) < (pretoken.alphabet_list.len() - 1) {
-            let old_high = AlphabetPair{pair:(pretoken.alphabet_list[ind+1].clone(), pretoken.alphabet_list[ind+2].clone())};
-            old_pairs.push(old_high);
-        }
-    }
-    return old_pairs;
 }
 
 fn get_pretoken_list() -> Vec<Pretoken>{
@@ -190,89 +153,20 @@ fn make_alphabet_pair_tree(initial_counts:&HashMap<AlphabetPair, AlphabetPairInf
     return ap_tree;
 }
 
-fn update_old_pairs_to_change(
-    pairs_to_change:&mut HashMap<AlphabetPair, AlphabetPairInfo>, 
-    ap_hash:&HashMap<AlphabetPair, AlphabetPairInfo>,
-    old_pairs:Vec<AlphabetPair>,
-    pretoken:&Pretoken){
-    // adds old pair information for this pretoken to the pairs to change hash
-    for old_pair in old_pairs {
-        let (old_count, old_pids) = match ap_hash.get(&old_pair) {
-            None => (0, &Vec::new()),
-            Some(api) => (api.count, &api.pretoken_ids)
-        };
-        // mutable reference to pairs_to_change entry
-        let api = pairs_to_change.entry(old_pair).or_insert(
-            AlphabetPairInfo{count:old_count, pretoken_ids:(*old_pids).clone()}
-        );
-        // decrement new count
-        api.count -= pretoken.count;
-    }
-}
 
-fn update_alphabet_list(pretoken:&mut Pretoken, pair:&AlphabetPair) {
+fn new_alphabet_list(pretoken:&Pretoken, pair:&AlphabetPair) -> Vec<Vec<u8>>{
     let pair_tuple = &pair.pair;
     let mut i:usize = 1;
-    while i < pretoken.alphabet_list.len() {
-        if pretoken.alphabet_list[i-1] == pair_tuple.0 && pretoken.alphabet_list[i] == pair_tuple.1 {
-            let mut to_add = pretoken.alphabet_list[i].clone();
-            pretoken.alphabet_list[i-1].append(&mut to_add);
-            pretoken.alphabet_list.remove(i);
+    let mut new_alphabet_list:Vec<Vec<u8>> = pretoken.alphabet_list.clone();
+    while i < new_alphabet_list.len() {
+        if new_alphabet_list[i-1] == pair_tuple.0 && new_alphabet_list[i] == pair_tuple.1 {
+            let mut to_add = new_alphabet_list[i].clone();
+            new_alphabet_list[i-1].append(&mut to_add);
+            new_alphabet_list.remove(i);
         }
         i += 1;
     }
-}
-
-fn get_new_pairs(pretoken:&Pretoken, pair:&AlphabetPair) -> Vec<AlphabetPair>{
-    let mut new_al = pair.pair.0.clone();
-    new_al.append(&mut pair.pair.1.clone());
-    let mut new_pairs:Vec<AlphabetPair> = Vec::new();
-    for i in 1..pretoken.alphabet_list.len() {
-        if pretoken.alphabet_list[i] != new_al {
-            continue
-        }
-        if i > 0 {
-            // to avoid double counting
-            if pretoken.alphabet_list[i-1] != pretoken.alphabet_list[i]{
-                let lower_pair = AlphabetPair{pair:(pretoken.alphabet_list[i-1].clone(), pretoken.alphabet_list[i].clone())};
-                new_pairs.push(lower_pair);
-            }
-        }
-        if (i+1) < pretoken.alphabet_list.len() {
-            let upper_pair = AlphabetPair{pair:(pretoken.alphabet_list[i].clone(), pretoken.alphabet_list[i+1].clone())};
-            new_pairs.push(upper_pair);
-        }
-    }
-    return new_pairs;
-}
-
-fn update_new_pairs_to_change(
-    pairs_to_change:&mut HashMap<AlphabetPair, AlphabetPairInfo>, 
-    newpairs:Vec<AlphabetPair>, 
-    ap_hash:&HashMap<AlphabetPair, AlphabetPairInfo>,
-    pretoken:&Pretoken,
-    pid:usize){
-
-    // adds old pair information for this pretoken to the pairs to change hash
-    for new_pair in newpairs {
-        let (old_count, old_pids) = match ap_hash.get(&new_pair) {
-            None => (0, &Vec::new()),
-            Some(api) => (api.count, &api.pretoken_ids)
-        };
-        // mutable reference to pairs_to_change entry
-        let api = pairs_to_change.entry(new_pair).or_insert(
-            AlphabetPairInfo{count:old_count, pretoken_ids:(*old_pids).clone()}
-        );
-        // increment new count
-        api.count += pretoken.count;
-        let already_there = match api.pretoken_ids.last() {
-            None => false,
-            Some(last_pid) => *last_pid == pid
-        };
-        if !already_there {
-            api.pretoken_ids.push(pid);
-        }
-    }
+    return new_alphabet_list;
 }
 
 fn update_ap_structures(ap_hash:&mut HashMap<AlphabetPair,AlphabetPairInfo> ,ap_tree:&mut BTreeSet<AlphabetPairKey>, pairs_to_change:HashMap<AlphabetPair, AlphabetPairInfo>) {
@@ -305,10 +199,45 @@ fn update_ap_structures(ap_hash:&mut HashMap<AlphabetPair,AlphabetPairInfo> ,ap_
     }
 }
 
+fn update_pairs_to_change(
+    pairs_to_change:&mut HashMap<AlphabetPair, AlphabetPairInfo>,
+    ap_hash:&HashMap<AlphabetPair, AlphabetPairInfo>,
+    new_alphabet_list:&Vec<Vec<u8>>,
+    pretoken:&Pretoken,
+    pid:&usize){
+
+    // count new pairs
+    let mut count_change_hash:HashMap<(&Vec<u8>,&Vec<u8>), i64> = HashMap::new();
+    for i in 1..new_alphabet_list.len() {
+        let pair = (&new_alphabet_list[i-1], &new_alphabet_list[i]);
+        let current_count = count_change_hash.entry(pair).or_insert(0);
+        *current_count += pretoken.count as i64;
+    }
+    // remove old pairs
+    for i in 1..pretoken.alphabet_list.len() {
+        let pair = (&pretoken.alphabet_list[i-1], &pretoken.alphabet_list[i]);
+        let current_count = count_change_hash.entry(pair).or_insert(0);
+        *current_count -= pretoken.count as i64;
+    }
+    // update pairs to change
+    for (pair, val) in count_change_hash {
+        if val == 0 {
+            continue
+        }
+        let ap = AlphabetPair{pair:(pair.0.clone(), pair.1.clone())};
+        let old_entry = match ap_hash.get(&ap) {
+            None => AlphabetPairInfo { count: 0, pretoken_ids: Vec::new() },
+            Some(api) => api.clone()
+        };
+        let api = pairs_to_change.entry(ap).or_insert(old_entry);
+        api.pretoken_ids.push(*pid);
+        let new_count:i64 = (api.count as i64)+ val;
+        api.count = new_count as usize; 
+    }
+}
 
 fn train(num_merges:usize) -> Option<Vec<AlphabetPair>> {
     // for now just returns merges
-    println!("Hello, world!");
     let mut merges:Vec<AlphabetPair> = Vec::new();
 
     // get list of pretokens
@@ -321,40 +250,29 @@ fn train(num_merges:usize) -> Option<Vec<AlphabetPair>> {
     let mut ap_hash = count_initial_pairs(&pretoken_list);
     // insert into BTreeMap
     let mut ap_tree = make_alphabet_pair_tree(&ap_hash);
-
-    // // borrow last one read only 
-    // let max_ap = ap_tree.last()?;
-    // let pair = &max_ap.pair.pair;
-    // let count = &max_ap.count;
-    // println!("max_ap {pair:?} max_count {count}");
     
     while merges.len() < num_merges {
         // get max ap from tree
         let max_ap = ap_tree.last()?;
-        let print_pair = &max_ap.pair.pair;
-        println!("{print_pair:?}");
         // get pid list from hash
         let pretoken_id_list = &ap_hash.get(&max_ap.pair)?.pretoken_ids;
         // hash of pairs to change, key AlphabetPair, values AlphabetPairInfo
         let mut pairs_to_change:HashMap<AlphabetPair, AlphabetPairInfo> = HashMap::new();
         for pid in pretoken_id_list {
-            let mut pretoken = match pretoken_list.get_mut(*pid){
+            let pretoken = match pretoken_list.get_mut(*pid){
                 None => continue,
                 Some(pt) => pt,
             };
-            let inds = get_pair_indices(&pretoken, &max_ap.pair);
-            // get old pairs as AlphabetPairs
-            let old_pairs = get_old_pairs(&pretoken,&inds);            
+            // new alphabet list 
+            let new_alphabet_list : Vec<Vec<u8>> = new_alphabet_list(&pretoken, &max_ap.pair);    
             // decrement counts of old pairs in our pairs to change hash
-            update_old_pairs_to_change(&mut pairs_to_change, &ap_hash, old_pairs, &pretoken);
-            // replace the maxpair in this pretoken alphabet list
-            update_alphabet_list(&mut pretoken, &max_ap.pair);
-            // get new pairs to add to hash
-            let new_pairs = get_new_pairs(&pretoken, &max_ap.pair);
-            update_new_pairs_to_change(&mut pairs_to_change, new_pairs, &ap_hash, &pretoken, *pid);
+            update_pairs_to_change(&mut pairs_to_change, &ap_hash, &new_alphabet_list, &pretoken, pid);
+            // replace alphabet list
+            pretoken.alphabet_list = new_alphabet_list;
         }
         // have to copy here in case it gets modified in the update call
         let max_ap_clone = max_ap.clone();
+        // no need to edit this, think it might cause issues as well
         merges.push(max_ap_clone.pair.clone());
         update_ap_structures(&mut ap_hash, &mut ap_tree, pairs_to_change);
         ap_tree.remove(&max_ap_clone);
