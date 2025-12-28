@@ -1,1 +1,7 @@
-Assignment 1 but in Rust.
+Assignment 1 but in Rust
+
+# TODO
+- File
+- Get pretokens (and their counts)
+- 
+
