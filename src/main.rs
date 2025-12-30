@@ -8,7 +8,8 @@ use memchr::memmem;
 use rayon::prelude::*;
 use std::time::Instant;
 mod pretokenizing;
-use std::fs::File;
+
+
 
 struct Pretoken {
     count:usize,
@@ -324,7 +325,7 @@ fn train(num_merges:usize) -> Option<Vec<AlphabetPair>> {
 
 
 
-fn main() -> Result<(), std::io::Error>{
+fn main() {
     // match train(10000){
     //     None => println!("no merges returned"),
     //     Some(merges) => {
@@ -341,27 +342,29 @@ fn main() -> Result<(), std::io::Error>{
     //         }
     //     }
     // };
+
+    // let datafile = "data/corpus.en";
     let datafile = "data/TinyStoriesV2-GPT4-train.txt";
-    let fi = File::open(datafile)?;
     let st = b"<|endoftext|>";
-    // let boundaries: Result<Vec<u64>, std::io::Error> = pretokenizing::find_chunk_boundaries(fi, 12, st);
-    // println!("these are the boundaries");
-    // if let Ok(bs) = boundaries {
-    //     for b in bs {
-    //         println!("{b:?}");
-    //     }
-    // }
+    let start = Instant::now();
+    let pretoken_counts = pretokenizing::get_pretoken_counts(datafile, 4, st).expect("issue in pretoken counts");
+    let end = Instant::now();
+    println!("total num of pretokens: {}",pretoken_counts.len());
+    println!("elapsed {:?}", end-start);
+    
+    // let datafile = "data/TinyStoriesV2-GPT4-valid.txt";
+    // let fi = File::open(datafile)?;
+
+    // let start = Instant::now();
+    // let locs = pretokenizing::find_st_locs_par(fi, 4, st)?;
+    // let end = Instant::now();
+    // let elapsed = end - start;
+    // println!("elapsed {elapsed:#?}");
+    // let locs_len = locs.len();
+    // println!("# of locs: {locs_len}");    
     // return Ok({})
 
-    let start = Instant::now();
-    let locs = pretokenizing::find_st_locs_par(fi, 4, st)?;
-    let end = Instant::now();
-    let elapsed = end - start;
-    println!("elapsed {elapsed:#?}");
-    let locs_len = locs.len();
-    println!("# of locs: {locs_len}");    
-    return Ok({})
-
+    return;
 }
 
 
