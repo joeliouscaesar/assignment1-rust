@@ -7,6 +7,8 @@ use memmap2::Mmap;
 use memchr::memmem;
 use rayon::prelude::*;
 use std::time::Instant;
+mod pretokenizing;
+use std::fs::File;
 
 struct Pretoken {
     count:usize,
@@ -143,70 +145,6 @@ fn get_pretoken_list2() -> Option<Vec<Pretoken>> {
     return Some(pretoken_list);
 }
 
-
-// fn get_pretoken_list() -> Option<Vec<Pretoken>>{
-//    // PRETOKENS
-//     let mut pretoken_counts:HashMap<String, usize> = HashMap::new();
-//     let mut pretoken_list:Vec<Pretoken> = Vec::new();
-
-//     // compile regex
-//     let re = Regex::new(r"'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+");
-//     // pattern match on if error
-//     let re = match re {
-//         Ok(x) => x,
-//         Err(e) => {
-//             println!("regex issue {e}");
-//             return None;
-//         }
-//     };
-
-//     // read in file
-//     // let contents = fs::read_to_string("data/corpus.en");
-//     let contents = fs::read_to_string("data/TinyStoriesV2-GPT4-valid.txt");
-//     let contents = match contents {
-//         Ok(s) => s,
-//         Err(e) => {
-//             println!("issue reading file: {e}");
-//             return None;
-//         }
-//     };
-//     // add values to a hash map
-//     let re_iter = re.find_iter(&contents);
-//     for re_match in re_iter {
-
-//         // string pretoken
-//         let group = match re_match {
-//             Ok(g) => g,
-//             Err(e) => {
-//                 println!("issue with group {e}");
-//                 continue;
-//             }
-//         };
-//         let group = group.as_str().to_string();
-
-//         let count = match pretoken_counts.get(&group){
-//             None => 0,
-//             Some(n) => *n,
-//         };
-//         let count = count + 1;
-//         pretoken_counts.insert(group, count);
-
-//     } 
-
-//     for(pretoken_str, n) in pretoken_counts {
-//         // for pretoken objects
-//         let mut al = Vec::new();
-//         for b in pretoken_str.bytes() {
-//             al.push(vec![b]);
-//         }
-//         let new_pretoken = Pretoken{
-//             count: n,
-//             alphabet_list: al,
-//         };
-//         pretoken_list.push(new_pretoken);
-//     };
-//     return Some(pretoken_list);
-// }
 
 fn count_initial_pairs(pretoken_list:&Vec<Pretoken>) -> HashMap<AlphabetPair, AlphabetPairInfo>{
     let mut alphabet_pair_hash:HashMap<AlphabetPair,AlphabetPairInfo> = HashMap::new();
@@ -386,24 +324,44 @@ fn train(num_merges:usize) -> Option<Vec<AlphabetPair>> {
 
 
 
-fn main() {
-    match train(10000){
-        None => println!("no merges returned"),
-        Some(merges) => {
+fn main() -> Result<(), std::io::Error>{
+    // match train(10000){
+    //     None => println!("no merges returned"),
+    //     Some(merges) => {
 
-            println!("MERGES (first 10)");
-            let mut i = 0;
-            for merge in merges{
-                let pair = merge.pair;
-                println!("{pair:?}");
-                i += 1;
-                if i > 10 {
-                    break;
-                }
-            }
-        }
-    };
-    return;
+    //         println!("MERGES (first 10)");
+    //         let mut i = 0;
+    //         for merge in merges{
+    //             let pair = merge.pair;
+    //             println!("{pair:?}");
+    //             i += 1;
+    //             if i > 10 {
+    //                 break;
+    //             }
+    //         }
+    //     }
+    // };
+    let datafile = "data/TinyStoriesV2-GPT4-train.txt";
+    let fi = File::open(datafile)?;
+    let st = b"<|endoftext|>";
+    // let boundaries: Result<Vec<u64>, std::io::Error> = pretokenizing::find_chunk_boundaries(fi, 12, st);
+    // println!("these are the boundaries");
+    // if let Ok(bs) = boundaries {
+    //     for b in bs {
+    //         println!("{b:?}");
+    //     }
+    // }
+    // return Ok({})
+
+    let start = Instant::now();
+    let locs = pretokenizing::find_st_locs_par(fi, 4, st)?;
+    let end = Instant::now();
+    let elapsed = end - start;
+    println!("elapsed {elapsed:#?}");
+    let locs_len = locs.len();
+    println!("# of locs: {locs_len}");    
+    return Ok({})
+
 }
 
 
