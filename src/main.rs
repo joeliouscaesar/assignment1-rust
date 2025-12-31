@@ -1,15 +1,9 @@
-// use fancy_regex::Regex;
-use regex::bytes::Regex;
 use std::collections::{HashMap, BTreeSet};
 use std::hash::Hash;
 use std::vec;
-use memmap2::Mmap;
-use memchr::memmem;
-use rayon::prelude::*;
 use std::time::Instant;
 mod pretokenizing;
-
-
+use std::thread;
 
 struct Pretoken {
     count:usize,
@@ -62,75 +56,16 @@ let x:Vec<u8> = vec![1,12,13];
 
 }
 
-fn regex_test<'a>(content:&'a [u8], re:&Regex, mut counts:HashMap<&'a [u8], usize>) -> HashMap<&'a [u8], usize>{
-    // let content = b"I'm the content, just a string. well bytes. whatever. hopefully this works. it's a long shot, no doubt.";
-    let byte_vecs = re.find_iter(content).map(|x| x.as_bytes());
-    for bv in byte_vecs{
-        *counts.entry(bv).or_insert(0) += 1;
-    }
-    return counts;
-}
+fn get_pretoken_list(
+    file_path:&str,
+    threads:u64,
+    split_special_token: Option<&[u8]>
+) -> Vec<Pretoken> {
 
-fn get_pretoken_list2() -> Option<Vec<Pretoken>> {
-   // PRETOKENS
-   
+    let pretoken_counts = pretokenizing::get_pretoken_counts(file_path, threads, split_special_token)
+        .expect("issue with pretoken counts");
+
     let mut pretoken_list:Vec<Pretoken> = Vec::new();
-
-    // compile regex
-    // let re = Regex::new(r"'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+");
-    let re = Regex::new(r"'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+$|\s+");
-    // pattern match on if error
-    let re = match re {
-        Ok(x) => x,
-        Err(e) => {
-            println!("regex issue {e}");
-            return None;
-        }
-    };
-
-    //read in with mmap
-    let fi = std::fs::File::open("data/TinyStoriesV2-GPT4-train.txt");
-    // let fi = std::fs::File::open("data/fake.txt");
-    let fi = match fi {
-        Err(_) => return None,
-        Ok(fi) => fi
-    };
-    let mmap = unsafe { Mmap::map(&fi)};
-    let mmap = match mmap {
-        Err(_) => {
-            println!("mmap issue");
-            return None
-        },
-        Ok(mmm) => mmm
-    };
-    // get the delimiters
-    let delimiter = b"<|endoftext|>";
-    let delim_len = delimiter.len();
-    let finder = memmem::Finder::new(delimiter);
-    // return pairs of indices that are blocks to read in (b/n delimiters)
-    let mut chunks:Vec<(usize,usize)> = Vec::new();
-    let mut start:usize = 0;
-    for end in finder.find_iter(&mmap) {
-        if end != start {
-            chunks.push((start, end));
-        }
-        start = end + delim_len;
-    }
-
-    let pretoken_counts = chunks.par_iter().fold(|| HashMap::new(),
-        |current_counts, c:&(usize,usize)| {
-            regex_test(&mmap[c.0..c.1],&re,current_counts)
-    }).reduce(|| HashMap::new(), 
-        |mut mapa, mapb| {
-            for (k,v) in mapb {
-                *mapa.entry(k).or_insert(0) += v;
-            }
-            return mapa
-    });
-
-    let pretoken_count_len = pretoken_counts.len();
-    println!("pretoken counts {pretoken_count_len}");
-
     for(pretoken_str, n) in pretoken_counts {
         // for pretoken objects
         let mut al = Vec::new();
@@ -143,7 +78,7 @@ fn get_pretoken_list2() -> Option<Vec<Pretoken>> {
         };
         pretoken_list.push(new_pretoken);
     };
-    return Some(pretoken_list);
+    return pretoken_list;
 }
 
 
@@ -202,7 +137,11 @@ fn update_ap_structures(ap_hash:&mut HashMap<AlphabetPair,AlphabetPairInfo> ,ap_
         let new_count = api.count;
         let ap_clone = ap.clone();
         // insert into the hash, get prior hash entry back
-        let hash_entry = ap_hash.insert(ap, api);
+        let hash_entry = if new_count > 0 {
+            ap_hash.insert(ap, api)
+        }else{
+            ap_hash.remove(&ap)
+        };
         // get old tree key from old count
         let old_ap_key:Option<AlphabetPairKey> = match hash_entry {
             None => None,
@@ -263,33 +202,88 @@ fn update_pairs_to_change(
     }
 }
 
-fn train(num_merges:usize) -> Option<Vec<AlphabetPair>> {
-    let t_start = Instant::now();
-    println!("Starting training {t_start:?}");
+fn flatten_pair(pair:&(Vec<u8>,Vec<u8>)) -> Vec<u8>{
+    let mut flattened = pair.0.clone();
+    flattened.append(&mut pair.1.clone());
+    flattened
+}
 
-    // for now just returns merges
+#[test]
+fn flatten_pair_test(){
+    let p1:(Vec<u8>, Vec<u8>) = (vec![0, 12, 23], vec![1,2,3]);
+    let ans1:Vec<u8> = vec![0, 12, 23, 1, 2, 3];
+    let p2:(Vec<u8>, Vec<u8>) = (vec![0, 12, 23], vec![]);
+    let ans2:Vec<u8> = vec![0, 12, 23];
+    let p3:(Vec<u8>, Vec<u8>) = (vec![], vec![]);
+    let ans3:Vec<u8> = vec![];
+    let p4:(Vec<u8>, Vec<u8>) = (vec![],vec![0, 12, 23]);
+    let ans4:Vec<u8> = vec![0, 12, 23];
+    assert_eq!(flatten_pair(&p1), ans1);
+    assert_eq!(flatten_pair(&p2), ans2);
+    assert_eq!(flatten_pair(&p3), ans3);
+    assert_eq!(flatten_pair(&p4), ans4);
+}
+
+fn train(
+    input_path:&str,
+    vocab_size:usize,
+    special_token:Option<&[u8]>, // takes 1 or 0 special tokens
+    threads:Option<u64>
+) -> Option<(HashMap<usize, Vec<u8>>, Vec<AlphabetPair>)> {
+
+    // structs to return
+    let mut vocab:HashMap<usize, Vec<u8>> = HashMap::new();
     let mut merges:Vec<AlphabetPair> = Vec::new();
 
+    // initialize vocab
+    for i in 0..256 {
+        let i_u8 = i as u8;
+        let i_usize = i as usize;
+        vocab.insert(i_usize, vec![i_u8]);
+    }
+    match special_token {
+        None => {},
+        Some(st) => {
+            _ = vocab.insert(vocab.len(), st.to_vec())
+        }
+    };
+
+    // determine threads to use for pretokenization
+    let available_threads = match thread::available_parallelism() {
+        Ok(t) => t.get(),
+        Err(e) => {
+            println!("{e}");
+            return None
+        }
+    };
+    let threads = match threads {
+        None => available_threads as u64,
+        Some(t) => t
+    };
+
     // get list of pretokens
-    let mut pretoken_list = get_pretoken_list2()?;
-    // print some summary stats
-    let num_pretokens = pretoken_list.len();
-    println!("total number of pretokens: {num_pretokens}");
+    let mut pretoken_list = get_pretoken_list(input_path, threads, special_token);
 
-    let t_pretoke = Instant::now();
-    println!("Done pretokenizing {t_pretoke:?}");
-    let elapsed = t_pretoke - t_start;
-    println!("elapsed: {elapsed:?}");
-
-    // get initial counts as a hash, then sort using a BTreeMap
+    // get initial counts as a hash, then sort using a BTreeSet
     let mut ap_hash = count_initial_pairs(&pretoken_list);
-    // insert into BTreeMap
+    // insert into BTreeSet
     let mut ap_tree = make_alphabet_pair_tree(&ap_hash);
     
-    while merges.len() < num_merges {
-        // get max ap from tree
-        let max_ap = ap_tree.last()?;
-        // get pid list from hash
+    while vocab.len() < vocab_size {
+        // get max ap from tree, add to vocab/merges
+        let max_ap = ap_tree.last();
+        let max_ap = match max_ap {
+            None => {
+                break
+            }, // in this case I think no more possible merges!
+            Some(ap) => ap
+        };
+
+        let flat_ap = flatten_pair(&max_ap.pair.pair);
+        vocab.insert(vocab.len(), flat_ap);
+        merges.push(max_ap.pair.clone());
+
+        // get pid list for this alphabet pair
         let pretoken_id_list = &ap_hash.get(&max_ap.pair)?.pretoken_ids;
         // hash of pairs to change, key AlphabetPair, values AlphabetPairInfo
         let mut pairs_to_change:HashMap<AlphabetPair, AlphabetPairInfo> = HashMap::new();
@@ -300,69 +294,61 @@ fn train(num_merges:usize) -> Option<Vec<AlphabetPair>> {
             };
             // new alphabet list 
             let new_alphabet_list : Vec<Vec<u8>> = new_alphabet_list(&pretoken, &max_ap.pair);    
-            // decrement counts of old pairs in our pairs to change hash
+            // update pairs to change given our new alphabet list
             update_pairs_to_change(&mut pairs_to_change, &ap_hash, &new_alphabet_list, &pretoken, pid);
-            // replace alphabet list
+            // replace alphabet list for this pretoken
             pretoken.alphabet_list = new_alphabet_list;
         }
-        // have to copy here in case it gets modified in the update call
+        // update ap structures with pairs to change and remove max pair
         let max_ap_clone = max_ap.clone();
-        // no need to edit this, think it might cause issues as well
-        merges.push(max_ap_clone.pair.clone());
         update_ap_structures(&mut ap_hash, &mut ap_tree, pairs_to_change);
-        ap_tree.remove(&max_ap_clone);
+        assert!(!ap_tree.contains(&max_ap_clone));
+        assert!(!ap_hash.contains_key(&max_ap_clone.pair));
     }
 
-    let t_merges = Instant::now();
-    println!("Done merging {t_merges:?}");
-    let elapsed = t_merges - t_pretoke;
-    println!("elapsed: {elapsed:?}");
-    let elapsed = t_merges - t_start;
-    println!("total train elapsed: {elapsed:?}");
-
-    return Some(merges);
+    return Some((vocab,merges));
 }
 
 
 
 fn main() {
-    // match train(10000){
-    //     None => println!("no merges returned"),
-    //     Some(merges) => {
-
-    //         println!("MERGES (first 10)");
-    //         let mut i = 0;
-    //         for merge in merges{
-    //             let pair = merge.pair;
-    //             println!("{pair:?}");
-    //             i += 1;
-    //             if i > 10 {
-    //                 break;
-    //             }
-    //         }
-    //     }
-    // };
-
+    // // For Testing 
     // let datafile = "data/corpus.en";
-    let datafile = "data/TinyStoriesV2-GPT4-train.txt";
+    // let st = b"<|endoftext|>";
+    // let (vocab, merges) = train(&datafile, 500, Some(st), Some(1)).expect("training failed");
+    // let fi = fs::OpenOptions::new().append(false).create(true).write(true).open("myvocab.txt");
+    // let mut fi = match fi {
+    //     Err(e) => {println!("output file issue"); return}
+    //     Ok(f) => f
+    // };
+    // for i in 0..vocab.len(){
+    //     if let Some(s) = vocab.get(&i) {
+    //         let line = format!("{:?}: {}\n", s, i);
+    //         _ = fi.write(&line.as_bytes());
+    //     }
+    // }
+
+    
+    // // TinyStoriesTrain
+    // // elapsed: 30.254248618s
+    // let datafile = "data/TinyStoriesV2-GPT4-train.txt";
+    // let st = b"<|endoftext|>";
+    // let start = Instant::now();
+    // let (vocab, _) = train(&datafile, 10000, Some(st), Some(4)).expect("training failed");
+    // let end = Instant::now();
+    // assert_eq!(vocab.len(), 10000);
+    // println!("elapsed: {:?}", end-start);
+
+    // TinyStoriesTrain
+    // elapsed: 30.254248618s
+    let datafile = "data/owt_train.txt";
     let st = b"<|endoftext|>";
     let start = Instant::now();
-    let pretoken_counts = pretokenizing::get_pretoken_counts(datafile, 4, st).expect("issue in pretoken counts");
+    let (vocab, _) = train(&datafile, 10000, Some(st), Some(4)).expect("training failed");
     let end = Instant::now();
-    println!("total num of pretokens: {}",pretoken_counts.len());
-    println!("elapsed {:?}", end-start);
-    
-    // let datafile = "data/TinyStoriesV2-GPT4-valid.txt";
-    // let fi = File::open(datafile)?;
+    assert_eq!(vocab.len(), 10000);
+    println!("elapsed: {:?}", end-start);
 
-    // let start = Instant::now();
-    // let locs = pretokenizing::find_st_locs_par(fi, 4, st)?;
-    // let end = Instant::now();
-    // let elapsed = end - start;
-    // println!("elapsed {elapsed:#?}");
-    // let locs_len = locs.len();
-    // println!("# of locs: {locs_len}");    
-    // return Ok({})
 
     return;
 }
