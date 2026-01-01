@@ -4,6 +4,8 @@ use std::vec;
 use std::time::Instant;
 mod pretokenizing;
 use std::thread;
+use std::fs;
+use std::io::Write;
 
 struct Pretoken {
     count:usize,
@@ -339,17 +341,29 @@ fn main() {
     // assert_eq!(vocab.len(), 10000);
     // println!("elapsed: {:?}", end-start);
 
-    // TinyStoriesTrain
-    // elapsed: 30.254248618s
+    // OWT Train
+    // elapsed: 15853.827499257s
     let datafile = "data/owt_train.txt";
     let st = b"<|endoftext|>";
     let start = Instant::now();
-    let (vocab, _) = train(&datafile, 10000, Some(st), Some(4)).expect("training failed");
+    let vocab_size:usize=30000;
+    let (vocab, _) = train(&datafile, vocab_size, Some(st), Some(4)).expect("training failed");
     let end = Instant::now();
-    assert_eq!(vocab.len(), 10000);
+    assert_eq!(vocab.len(), vocab_size);
     println!("elapsed: {:?}", end-start);
 
-
+    // write vocab
+    let fi = fs::OpenOptions::new().append(false).create(true).write(true).open("owt_vocab.txt");
+    let mut fi = match fi {
+        Err(_) => {println!("output file issue"); return}
+        Ok(f) => f
+    };
+    for i in 0..vocab.len(){
+        if let Some(s) = vocab.get(&i) {
+            let line = format!("{:?}: {}\n", s, i);
+            _ = fi.write(&line.as_bytes());
+        }
+    }
     return;
 }
 
