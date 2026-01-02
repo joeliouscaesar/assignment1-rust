@@ -2,10 +2,11 @@ use std::collections::{HashMap, BTreeSet};
 use std::hash::Hash;
 use std::vec;
 use std::time::Instant;
-mod pretokenizing;
 use std::thread;
 use std::fs;
 use std::io::Write;
+mod pretokenizing;
+mod merge;
 
 struct Pretoken {
     count:usize,
