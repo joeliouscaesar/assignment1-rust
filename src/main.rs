@@ -6,7 +6,7 @@ use std::thread;
 use std::fs;
 use std::io::Write;
 mod pretokenizing;
-mod merge;
+mod encode_decode;
 
 struct Pretoken {
     count:usize,
