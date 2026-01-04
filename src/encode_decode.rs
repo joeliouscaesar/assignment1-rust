@@ -31,14 +31,13 @@ use std::collections::HashSet;
 struct VocabDetail{
     vocab_num:u32,
     word:Vec<u8>,
+    loc:usize,
 }
 
 struct EncodedPair{
     vocab_id:u32,
     length:usize,
 }
-
-
 
 const INITAL_ALPHABET_SIZE:i32 = 257;
 
@@ -52,13 +51,13 @@ fn make_vocab_hash(vocab:Vec<Vec<u8>>) -> Option<HashMap<Vec<u8>, u32>>{
     return None;
 }
 
-fn lookup_and_insert_sorted(subword:&[u8], vocab_hash:&HashMap<Vec<u8>, u32>, vocab_in_subword:&mut Vec<VocabDetail>){
+fn lookup_and_insert_sorted(subword:&[u8], loc:usize, vocab_hash:&HashMap<Vec<u8>, u32>, vocab_in_subword:&mut Vec<VocabDetail>){
     let vocab_num = match vocab_hash.get(subword) {
         None => return,
         Some(num) => num
     };
     let word:Vec<u8> = subword.iter().map(|b| *b).collect();
-    let detail:VocabDetail = VocabDetail { vocab_num: *vocab_num, word: word};
+    let detail:VocabDetail = VocabDetail { vocab_num: *vocab_num, word: word, loc:loc};
     match vocab_in_subword.binary_search(&detail) {
         Ok(_) => return, //already in the vocab vec
         Err(idx) => vocab_in_subword.insert(idx, detail)
@@ -66,25 +65,33 @@ fn lookup_and_insert_sorted(subword:&[u8], vocab_hash:&HashMap<Vec<u8>, u32>, vo
     return;
 }
 
-fn valid_merge(byte_loc:usize, vocab_len:usize, encoded:&Vec<EncodedPair>) -> bool{
+fn valid_merge(byte_loc:usize, vocab_len:usize, encoded:&Vec<EncodedPair>) -> Option<(usize,usize)>{
     let mut token_start:usize = 0;
-    for en in encoded {
+    let mut token_num:usize = 0;
+    let mut count:usize = 0;
+    for (i, en) in encoded.iter().enumerate() {
         let token_end = token_start + en.length;
         // can't start between start/end
         if token_start < byte_loc && byte_loc < token_end {
-            return false;
+            return None;
         }
         // can't end between start/end
-        if token_start < byte_loc+vocab_len && byte_loc+vocab_len < token_end {
-            return false;
+        else if token_start < byte_loc+vocab_len && byte_loc+vocab_len < token_end {
+            return None;
+        }        
+        // check if we're at a match start
+        if token_start == byte_loc {
+            token_num = i;
+            count += 1;
+        }else if count > 0 {
+            count += 1;
         }
-        // short circuit
-        if byte_loc+vocab_len < token_start {
-            return true;
+        if byte_loc+vocab_len == token_end {
+            return Some((token_num, count));
         }
         token_start = token_end;
     }
-    return true;
+    return None;
 }
 #[test]
 fn test_valid_merge(){
@@ -94,54 +101,60 @@ fn test_valid_merge(){
     encoded.push(EncodedPair { vocab_id:1, length: 2 });
     encoded.push(EncodedPair { vocab_id:2, length: 1 });
     
-    assert_eq!(valid_merge(0, 1, &encoded), true);
-    assert_eq!(valid_merge(0, 3, &encoded), true);
-    assert_eq!(valid_merge(0, 4, &encoded), true);
-    assert_eq!(valid_merge(0, 2, &encoded), false);
+    assert_eq!(valid_merge(0, 1, &encoded), Some((0,1)));
+    assert_eq!(valid_merge(0, 3, &encoded), Some((0,2)));
+    assert_eq!(valid_merge(0, 4, &encoded), Some((0,3)));
+    assert_eq!(valid_merge(0, 2, &encoded), None);
+    assert_eq!(valid_merge(1, 1, &encoded), None);
+    assert_eq!(valid_merge(2, 2, &encoded), None);
 }
 
 
 
-
-
 // fn merge_if_valid(pretoken:Vec<u32>, vocab_detail:VocabDetail) {
+
 //     // loop through, check 
 //     return ();
 // }
 
 
-// fn encode(text:String, vocab_hash:&HashMap<Vec<u8>, u32>) -> Option<Vec<u32>> {
-//     let text_bytes = text.as_bytes();
-//     let mut vocab_in_subword:Vec<VocabDetail> = Vec::new(); 
-//     for subword_start in 0..text_bytes.len() {
-//         for subword_end in subword_start+1..text_bytes.len()+1 {
-//             let subword = &text_bytes[subword_start..subword_end];
-//             lookup_and_insert_sorted(&subword, &vocab_hash, &mut vocab_in_subword);
-//         }
-//     }
-//     // initialize our encoded vector
-//     let mut encoded:Vec<u32> = Vec::new();
-//     for tb in text_bytes {
-//         encoded.push(*tb as u32);
-//     }
-//     // merge if valid
-//     merge_if_valid(pretoken, &vocab_in_subword);
+fn encode(text:String, vocab_hash:&HashMap<Vec<u8>, u32>) -> Option<Vec<u32>> {
+    let text_bytes = text.as_bytes();
+    let mut vocab_in_subword:Vec<VocabDetail> = Vec::new(); 
+    for subword_start in 0..text_bytes.len() {
+        for subword_end in subword_start+1..text_bytes.len()+1 {
+            let subword = &text_bytes[subword_start..subword_end];
+            lookup_and_insert_sorted(&subword, subword_start,&vocab_hash, &mut vocab_in_subword);
+        }
+    }
+    // initialize our encoded vector
+    let mut encoded:Vec<EncodedPair> = Vec::new();
+    for tb in text_bytes {
+        let ep = EncodedPair{vocab_id:(*tb as u32), length:1};
+        encoded.push(ep);
+    }
+    // do merges
+    let final_encoded = vocab_in_subword.iter().fold(
+        encoded, do_merges
+    );
 
+    let token_ids:Vec<u32> = final_encoded.iter().map(|x| x.vocab_id).collect();
 
-//     return None;
-// }
+    return Some(token_ids);
+}
 
-// merge step kind of complicated
-// think we want to keep the pretoken as a u8 vec
-// loop through bytes for vocab match
-    // when we have a match, check it isn't fully contained in another merge
-    // 
-
-
-// look for a match 
-
-
-// another two vectors
+fn do_merges(mut encoded_pairs:Vec<EncodedPair>, vd:&VocabDetail) -> Vec<EncodedPair>{
+    let (pos, mut num) = match valid_merge(vd.loc, vd.word.len(), &encoded_pairs){
+        None => return encoded_pairs,
+        Some((p,n)) => (p,n)
+    };
+    while num > 1 {
+        encoded_pairs.remove(pos);
+        num -= 1;
+    }
+    encoded_pairs[pos] = EncodedPair { vocab_id: vd.vocab_num, length: vd.word.len() };
+    return encoded_pairs;
+}
 
 
 
