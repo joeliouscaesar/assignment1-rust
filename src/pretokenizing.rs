@@ -10,6 +10,8 @@ use std::sync::mpsc;
 use std::thread;
 use regex::bytes::Regex;
 
+const INITAL_ALPHABET_SIZE:i32 = 257;
+
 /// Determines chunk boundaries given a file 
 pub fn find_chunk_boundaries(
     mut file:File,
