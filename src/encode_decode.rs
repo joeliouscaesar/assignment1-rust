@@ -25,6 +25,7 @@
 
 use std::collections::HashMap;
 use std::collections::HashSet;
+use std::hash::Hash;
 
 // we'll use this in the non-naive one
 #[derive(PartialEq, Eq, PartialOrd, Ord)]
@@ -156,26 +157,55 @@ fn do_merges(mut encoded_pairs:Vec<EncodedPair>, vd:&VocabDetail) -> Vec<Encoded
     return encoded_pairs;
 }
 
+#[test]
+fn test_encode() {
+    let mut vocab:HashMap<Vec<u8>, u32> = HashMap::new();
+    vocab.insert(vec![32], 0); // ' '
+    vocab.insert(vec![97], 1); // 'a'
+    vocab.insert(vec![99], 2); // 'c'
+    vocab.insert(vec![101], 3); // 'e'
+    vocab.insert(vec![104], 4); // 'h'
+    vocab.insert(vec![116], 5); // 't'
+    vocab.insert(vec![116,104], 6); // 'th'
+    vocab.insert(vec![32,99], 7); // ' c'
+    vocab.insert(vec![32,97],8); // ' a'
+    vocab.insert(vec![116,104,101],9); // 'the'
+    vocab.insert(vec![32,97, 116],10); // ' at'
+    
+    // the
+    let the = String::from("the");
+    let the_answer = encode(the, &vocab);
+    assert_ne!(the_answer, None);
+    let the_answer = match the_answer{
+        None => return,
+        Some(x) => x
+    };
+    let the_key:Vec<u32> = vec![9];
+    assert_eq!(the_answer, the_key);
+    
+    // cat
+    let cat = String::from(" cat");
+    let cat_answer = encode(cat, &vocab);
+    assert_ne!(cat_answer, None);
+    let cat_answer = match cat_answer{
+        None => return,
+        Some(x) => x
+    };
+    let cat_key:Vec<u32> = vec![7, 1, 5];
+    assert_eq!(cat_answer, cat_key);
 
+    // ate
+    let ate = String::from(" ate");
+    let ate_answer = encode(ate, &vocab);
+    assert_ne!(ate_answer, None);
+    let ate_answer = match ate_answer{
+        None => return,
+        Some(x) => x
+    };
+    let ate_key:Vec<u32> = vec![10, 3];
+    assert_eq!(ate_answer, ate_key);
 
+    return ();
 
-
-
-// don't worry about slicing these..
-// fn cats(k:usize) {
-//     let x = vec![1,2,3,4];
-//     let whelp = dogs(x);    
-//     let z = vec![1,2,3,4];
-//     match whelp.contains(&z[..z.len()]) {
-//         true => println!("yup z is in there!"),
-//         false => println!("nope, z is not there")
-//     };
-// }
-
-// fn dogs(x:Vec<i32>) -> HashSet<Vec<i32>>{
-//     let mut myhash:HashSet<Vec<i32>> = HashSet::new();
-//     myhash.insert(x);
-//     return myhash;
-// }
-
+}
 
